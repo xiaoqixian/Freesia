@@ -5,17 +5,15 @@
  */
 
 #include <unistd.h>
-#include <sys/rpc.h>
 #include <getopt.h>
 #include <string.h>
 #include <stdlib.h>
 #include <time.h>
-#include <signal.h>
 #include <sys/types.h>
-#include <pthread.h>
 
 #include "socket.h"
 #include "threadpool.h"
+#include "debug.h"
 
 #define PROGRAM_VERSION "1.5"
 #define PROGRAM_NAME "FREESIA"
@@ -27,17 +25,27 @@
 
 char request[REQUEST_SIZE];
 char host[MAX_HOST_LEN];
-int method;
+int method = 1;
 char* hostname;
 int port;
 int thread_num = 10;
+int clients = 10;
+int failed = 0;
+int success = 0;
+
+typedef void (*func_ptr)(void* content);
 
 void usage() {
     fprintf(stderr, "options\n"
-            "-a | set ip address, required"
-            "-p | set connect port, required"
-            "-n | set thread num, optional, default 10");
+            "-a | set ip address, required\n"
+            "-p | set connect port, required\n"
+            "-c | set the number clients to send request, optional, default 10\n"
+            "-m | set request method, optional, default GET\n"
+            "-n | set thread num, optional, default 10\n");
 }
+
+void send_request(void* content);
+void build_request(char* uri);
 
 int main(int argc, char* argv[]) {
     if (argc == 1) {
@@ -47,7 +55,7 @@ int main(int argc, char* argv[]) {
     
 
     int opt;
-    char* op_string = "a:p:n::h";
+    char* op_string = "a:p:n::c::m::h";
     while ((opt = getopt(argc, argv, op_string)) != -1) {
         switch (opt) {
             case 'a':
@@ -59,9 +67,15 @@ int main(int argc, char* argv[]) {
             case 'p':
                 port = atoi(optarg);
                 break;
+            case 'c':
+                clients = atoi(optarg);
+                break;
+            case 'm':
+                method = atoi(optarg);
+                break;
             case 'h':
                 usage();
-                break;
+                return 0;
         }
     }
     
@@ -73,23 +87,46 @@ int main(int argc, char* argv[]) {
     //build a request, shared by all threads
     build_request(hostname);
     
-    
+    func_ptr work = send_request;
+    int i, res;
+    for (i = 0; i < clients; i++) {
+        res = threadpool_add(tp, work, request);
+        if (res == -1) {
+            LOG_ERR("threadpool add task error");
+            continue;
+        }
+    }
+    if (threadpool_destroy(tp, 1) < 0) {
+        LOG_ERR("destroy threadpool failed");
+    }
+    printf("success: %d failed: %d\n", success, failed);
+    return 0;
 }
 
-void send(void* content) {
+void send_request(void* content) {
+    LOG_INFO("send request task");
     char* req = (char*)content;
     int sock = create_socket(hostname, port);
-    CHECK(sock == -1, "sock create failed");
+    if (sock == -1) {
+        LOG_ERR("create socket error");
+        failed++;
+        return ;
+    }
     
-    size_t size = write(sock, req, sizeof(req));
-    CHECK(size <= 0, "socket write error");
-    return ;
+    size_t req_len = strlen(req);
+    
+    if (req_len != write(sock, req, req_len)) {
+        failed++;
+    }
+    success++;
+    if (close(sock) == -1) {
+        LOG_ERR("socket close error");
+        exit(1);
+    }
 }
 
+
 void build_request(char* uri) {
-    char tmp[10];
-    int i;
-    
     memset(request, 0, sizeof(request));
     
     switch (method) {
@@ -100,7 +137,7 @@ void build_request(char* uri) {
     }
     
     strcat(request, " ");
-    strcat(request, uri);
+    strcat(request, "/");
     
     //default HTTP version:1.1
     strcat(request, " HTTP/1.1");

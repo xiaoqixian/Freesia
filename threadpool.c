@@ -3,11 +3,15 @@
  */
 
 #include "threadpool.h"
+#include "debug.h"
 
 typedef enum {
     immediate_shutdown = 1,
     graceful_shutdown = 2
 } threadpool_st_t;
+
+extern int failed;
+extern int success;
 
 static int threadpool_free(threadpool_t* pool);
 static void* threadpool_worker(void* arg);
@@ -70,6 +74,7 @@ ERR:
 
 //add a task to the threadpool, not thread
 int threadpool_add(threadpool_t* pool, void (*func)(void*), void* arg) {
+    LOG_INFO("a new task add");
     int res, err = 0;
     if (pool == NULL || func == NULL) {
         LOG_ERR("pool = NULL or func = NULL");
@@ -183,6 +188,7 @@ int threadpool_destroy(threadpool_t* pool, int graceful) {
 }
 
 static void* threadpool_worker(void* arg) {
+    LOG_INFO("threadpool exe a task");
     if (arg == NULL) {
         LOG_ERR("arg should be type threadpool_t");
         return NULL;
